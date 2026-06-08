@@ -6,7 +6,9 @@ import {
   signOut, 
   signInWithPhoneNumber,
   signInWithPopup,
-  signInAnonymously
+  signInAnonymously,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 
@@ -29,6 +31,8 @@ interface AuthState {
   awardCoins: (amount: number) => void;
   checkAuthSession: () => Promise<void>;
   signInWithGoogle: () => Promise<{ success: boolean; isNewUser?: boolean; error?: string }>;
+  signInWithEmail: (email: string, pass: string) => Promise<{ success: boolean; isNewUser?: boolean; error?: string }>;
+  signUpWithEmail: (email: string, pass: string) => Promise<{ success: boolean; isNewUser?: boolean; error?: string }>;
   enableSandboxBypass: (phoneWithPrefix: string) => void;
 }
 
@@ -354,6 +358,44 @@ export const useAuthStore = create<AuthState>((set, get) => ({
       const userDocRef = doc(db, 'users', fbUser.uid);
       const userSnap = await getDoc(userDocRef);
       const isNewUser = !userSnap.exists();
+      
+      set({ loading: false });
+      return { success: true, isNewUser };
+    } catch (err: any) {
+      set({ loading: false });
+      return { success: false, error: err.message };
+    }
+  },
+
+  signInWithEmail: async (email, pass) => {
+    set({ loading: true });
+    try {
+      const userCredential = await signInWithEmailAndPassword(auth, email, pass);
+      const fbUser = userCredential.user;
+      
+      set({ fbUser });
+      
+      const userDocRef = doc(db, 'users', fbUser.uid);
+      const userSnap = await getDoc(userDocRef);
+      const isNewUser = !userSnap.exists();
+      
+      set({ loading: false });
+      return { success: true, isNewUser };
+    } catch (err: any) {
+      set({ loading: false });
+      return { success: false, error: err.message };
+    }
+  },
+
+  signUpWithEmail: async (email, pass) => {
+    set({ loading: true });
+    try {
+      const userCredential = await createUserWithEmailAndPassword(auth, email, pass);
+      const fbUser = userCredential.user;
+      
+      set({ fbUser });
+      
+      const isNewUser = true; // Email sign up creates a brand-new user doc
       
       set({ loading: false });
       return { success: true, isNewUser };

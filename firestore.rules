@@ -232,6 +232,12 @@ service cloud.firestore {
       allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
     }
 
+    match /email_otps/{email} {
+      // Only Cloud Functions (admin) can read/write OTP documents
+      // Frontend clients have no direct access
+      allow read, write: if false;
+    }
+
     // 16. Config Documents Archive
     match /config/{configId} {
       allow read: if true;

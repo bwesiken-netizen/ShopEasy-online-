@@ -1,23 +1,28 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../stores';
 import { ShieldCheck, ArrowLeft, RefreshCw, Sparkles } from 'lucide-react';
-import { RecaptchaVerifier } from 'firebase/auth';
 import { auth } from '../firebase';
 import { motion, AnimatePresence } from 'motion/react';
+import { sendOTP, verifyOTP } from '../firebase/auth';
+import { signInWithCustomToken } from 'firebase/auth';
 
 export default function VerifyOtp() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [searchParams] = useSearchParams();
-  const rawPhone = searchParams.get('phone') || '';
+  const rawEmail = searchParams.get('email') || '';
 
-  const { confirmOtp, sendOtp, loading, user, isSandboxMode } = useAuthStore();
+  const { loading, user, isSandboxMode } = useAuthStore();
 
-  const [phone, setPhone] = useState(rawPhone || user?.phone || '');
+  const [email, setEmail] = useState(location.state?.email || rawEmail || user?.email || '');
   const [otpDigits, setOtpDigits] = useState<string[]>(Array(6).fill(''));
   const [countdown, setCountdown] = useState(59);
   const [canResend, setCanResend] = useState(false);
   
+  const [localLoading, setLocalLoading] = useState(false);
+  const isCurrentlyLoading = loading || localLoading;
+
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
 
@@ -30,12 +35,12 @@ export default function VerifyOtp() {
     }
   }, [user, navigate]);
 
-  // If no phone context is found inSearchParams or authState, fallback back to Login
+  // If no email context is found, fallback back to Login
   useEffect(() => {
-    if (!phone) {
+    if (!email) {
       navigate('/login', { replace: true });
     }
-  }, [phone, navigate]);
+  }, [email, navigate]);
 
   // Resend Countdown timer
   useEffect(() => {
@@ -109,18 +114,32 @@ export default function VerifyOtp() {
       return;
     }
 
-    const res = await confirmOtp(code);
-    if (res.success) {
-      setSuccessMsg('✓ Phone verified successfully! Chonde dikirani...');
-      setTimeout(() => {
-        if (res.isNewUser) {
-          navigate('/complete-profile');
-        } else {
-          navigate('/');
-        }
-      }, 1200);
-    } else {
-      setErrorMsg(res.error || 'The OTP code typed is incorrect. Please double check.');
+    try {
+      setLocalLoading(true);
+      const res = await verifyOTP({ email, otp: code });
+      if (res.data && (res.data as any).token) {
+        const { token, isNewUser, isProfileComplete } = res.data as any;
+        
+        setSuccessMsg('✓ Email verified successfully! Chonde dikirani...');
+        
+        // Securely login in client space using custom token
+        await signInWithCustomToken(auth, token);
+        
+        setTimeout(() => {
+          if (isNewUser || !isProfileComplete) {
+            navigate('/complete-profile');
+          } else {
+            navigate('/');
+          }
+        }, 1200);
+      } else {
+        setErrorMsg('Failed to verify OTP. Please try again.');
+      }
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg(err.message || 'The OTP code typed is incorrect. Please double check.');
+    } finally {
+      setLocalLoading(false);
     }
   };
 
@@ -129,32 +148,25 @@ export default function VerifyOtp() {
     setErrorMsg('');
     setSuccessMsg('');
 
-    // Reinitialize/Retrieve the invisible recaptcha
     try {
-      if (!(window as any).recaptchaVerifier) {
-        (window as any).recaptchaVerifier = new RecaptchaVerifier(auth, 'recaptcha-container-resend', {
-          size: 'invisible'
-        });
+      setLocalLoading(true);
+      const res = await sendOTP({ email });
+      if (res.data && (res.data as any).success) {
+        setSuccessMsg('✓ A new 6-digit OTP code has been transmitted.');
+        setCountdown(59);
+        setCanResend(false);
+      } else {
+        setErrorMsg('Failed to resend. Please try again later.');
       }
     } catch (err: any) {
-      setErrorMsg('Failed to setup verification protector: ' + err.message);
-      return;
-    }
-
-    const appVerifier = (window as any).recaptchaVerifier;
-
-    const res = await sendOtp(phone, appVerifier);
-    if (res.success) {
-      setSuccessMsg('✓ A new 6-digit OTP code has been transmitted.');
-      setCountdown(59);
-      setCanResend(false);
-    } else {
-      setErrorMsg(res.error || 'Failed to resend. Please try again later.');
+      console.error(err);
+      setErrorMsg(err.message || 'Failed to resend. Please try again later.');
+    } finally {
+      setLocalLoading(false);
     }
   };
 
-  // Nicely format phoneNumber for presentation, e.g. +265 999 123 456
-  const displayPhone = phone.replace(/(\+265)(\d{3})(\d{3})(\d{3})/, '$1 $2 $3 $4') || phone;
+  const displayEmail = email;
 
   return (
     <div className="flex flex-col gap-5 p-4 animate-[fadeIn_0.3s_ease] max-w-md mx-auto min-h-[85vh] justify-center text-[#212121]">
@@ -167,7 +179,7 @@ export default function VerifyOtp() {
           className="flex items-center gap-1 text-[11px] font-black uppercase text-neutral-500 hover:text-[#E53935] transition duration-200"
         >
           <ArrowLeft className="h-4.5 w-4.5" />
-          <span>Sinthani Nambala / Change Number</span>
+          <span>Sinthani Email / Change Email</span>
         </button>
       </div>
 
@@ -183,7 +195,7 @@ export default function VerifyOtp() {
               OTP Verification
             </h1>
             <p className="text-[10px] text-neutral-450 font-bold uppercase mt-1 leading-normal">
-              Enter the 6-digit code sent to <span className="font-mono text-neutral-800">{displayPhone}</span>
+              Enter the 6-digit code sent to <span className="font-mono text-neutral-800">{displayEmail}</span>
             </p>
           </div>
         </div>
@@ -221,7 +233,7 @@ export default function VerifyOtp() {
                 value={digit}
                 onChange={(e) => handleDigitChange(idx, e.target.value)}
                 onKeyDown={(e) => handleKeyDown(idx, e)}
-                disabled={loading}
+                disabled={isCurrentlyLoading}
                 className="w-11 h-12 text-center text-lg font-black font-mono rounded-xl border border-neutral-300 bg-neutral-50 text-[#E53935] focus:bg-white focus:outline-none focus:ring-2 focus:ring-[#E53935] focus:border-transparent transition-all"
               />
             ))}
@@ -230,15 +242,12 @@ export default function VerifyOtp() {
           <button
             id="verify-submit-btn"
             type="submit"
-            disabled={loading || otpDigits.some(d => d === '')}
+            disabled={isCurrentlyLoading || otpDigits.some(d => d === '')}
             className="w-full py-3.5 rounded-full bg-[#E53935] hover:bg-red-700 text-white text-xs font-black tracking-wide uppercase transition hover:shadow-md disabled:bg-neutral-300 flex items-center justify-center gap-2"
           >
-            <span>{loading ? 'Verifying... / Chonde dikirani' : 'Verify'}</span>
+            <span>{isCurrentlyLoading ? 'Verifying... / Chonde dikirani' : 'Verify'}</span>
           </button>
         </form>
-
-        {/* Hidden recaptcha division for resend safety */}
-        <div id="recaptcha-container-resend" className="mx-auto select-none opacity-0 h-0 pointer-events-none"></div>
 
         {/* Countdown counter or resend element */}
         <div className="text-center pt-3 border-t border-neutral-100 flex flex-col items-center justify-center gap-1">
