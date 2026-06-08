@@ -1,0 +1,138 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile in Malawi local e-commerce with phone verification",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "phone": { "type": "string" },
+        "name": { "type": "string" },
+        "location": { "type": "string" },
+        "role": { "type": "string", "enum": ["buyer", "seller", "admin"] },
+        "coins": { "type": "number" },
+        "storeId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["uid", "phone", "name", "location", "role", "coins", "createdAt"]
+    },
+    "Store": {
+      "title": "Store",
+      "description": "Seller local store in Malawi, Zomba, Blantyre, etc.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "ownerId": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "city": { "type": "string" },
+        "contactPhone": { "type": "string" },
+        "bannerUrl": { "type": "string" },
+        "verified": { "type": "boolean" },
+        "followerCount": { "type": "number" },
+        "rating": { "type": "number" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "ownerId", "name", "city", "contactPhone", "verified", "followerCount", "rating", "createdAt"]
+    },
+    "Product": {
+      "title": "Product",
+      "description": "Malawi marketplace product listed under a local store",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "storeId": { "type": "string" },
+        "storeName": { "type": "string" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "price": { "type": "number" },
+        "category": { "type": "string" },
+        "imageUrl": { "type": "string" },
+        "stock": { "type": "number" },
+        "city": { "type": "string" },
+        "active": { "type": "boolean" },
+        "featured": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "storeId", "storeName", "name", "price", "category", "imageUrl", "stock", "city", "active", "featured", "createdAt"]
+    },
+    "Order": {
+      "title": "Order",
+      "description": "Order with local delivery/pickup, priced in MWK and paid via Paychangu",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "buyerId": { "type": "string" },
+        "buyerName": { "type": "string" },
+        "buyerPhone": { "type": "string" },
+        "storeId": { "type": "string" },
+        "storeName": { "type": "string" },
+        "subtotal": { "type": "number" },
+        "couponCode": { "type": "string" },
+        "discount": { "type": "number" },
+        "total": { "type": "number" },
+        "deliveryMethod": { "type": "string", "enum": ["pickup", "delivery"] },
+        "deliveryAddress": { "type": "string" },
+        "status": { "type": "string", "enum": ["pending", "processing", "completed", "cancelled"] },
+        "paymentStatus": { "type": "string", "enum": ["unpaid", "paid"] },
+        "paychanguReference": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "buyerId", "buyerName", "buyerPhone", "storeId", "storeName", "subtotal", "discount", "total", "deliveryMethod", "status", "paymentStatus", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profiles with phone OTP authentication details"
+    },
+    "/stores/{storeId}": {
+      "schema": "Store",
+      "description": "Local Malawian marketplace stores"
+    },
+    "/products/{productId}": {
+      "schema": "Product",
+      "description": "Products list with MWK pricing"
+    },
+    "/orders/{orderId}": {
+      "schema": "Order",
+      "description": "Purchase orders handled via Paychangu gateway"
+    },
+    "/carts/{userId}": {
+      "schema": "Cart",
+      "description": "Persistent users shopping baskets"
+    },
+    "/coupons/{code}": {
+      "schema": "Coupon",
+      "description": "Discount coupon codes"
+    },
+    "/messages/{messageId}": {
+      "schema": "Message",
+      "description": "Local messaging chat items between buyers and sellers"
+    },
+    "/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "Push or screen alerts for orders, coins, or messages"
+    },
+    "/coinTransactions/{txId}": {
+      "schema": "CoinTransaction",
+      "description": "E-coin transactions tracker for rewards"
+    },
+    "/categories/{catId}": {
+      "schema": "Category",
+      "description": "Product categories in Malawi online system"
+    },
+    "/reviews/{reviewId}": {
+      "schema": "Review",
+      "description": "Customer feedback left on standard products"
+    },
+    "/wishlists/{userId}": {
+      "schema": "Wishlist",
+      "description": "User favorite items list"
+    },
+    "/followedStores/{followId}": {
+      "schema": "FollowedStore",
+      "description": "Log of stores followed by particular users"
+    }
+  }
+}

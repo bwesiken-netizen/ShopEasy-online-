@@ -1,0 +1,241 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // 1. Default Safety Net (Zero-Trust Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // 2. Global Safety Helper Primitives
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // 3. UserProfiles Collection (/users/{userId})
+    // - Read allowed for authenticated users (to fetch profiles during chats/listings/checkout)
+    // - Create/Update limited to owners
+    // - Prevent users from changing their own roles to escalators (buyer -> seller/admin)
+    function isValidUserProfile(data) {
+      return data.keys().hasAll(['uid', 'phone', 'name', 'location', 'role', 'coins', 'createdAt'])
+        && data.keys().size() <= 8
+        && data.uid == request.auth.uid
+        && data.phone is string && data.phone.size() <= 30
+        && data.name is string && data.name.size() <= 100
+        && data.location is string && data.location.size() <= 50
+        && data.role in ['buyer', 'seller', 'admin']
+        && data.coins is number
+        && (!('storeId' in data) || (data.storeId is string && data.storeId.size() <= 128));
+    }
+
+    match /users/{userId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+      allow create: if isSignedIn() 
+        && isOwner(userId) 
+        && isValidUserProfile(incoming())
+        && incoming().role == 'buyer'  // Force initial register to be standard buyer; seller/admin must be manually promoted
+        && incoming().coins == 0;      // Zero initial bonus unless given by trigger
+      
+      allow update: if isSignedIn() 
+        && isOwner(userId) 
+        && isValidUserProfile(incoming())
+        && incoming().role == existing().role   // Role immutability for client SDKs
+        && incoming().coins == existing().coins; // Coin updates happen only via cloud functions
+
+      match /coupons/{couponId} {
+        allow read, write: if isSignedIn() && isOwner(userId);
+      }
+
+      match /searchHistory/{historyId} {
+        allow read, write: if isSignedIn() && isOwner(userId);
+      }
+    }
+
+    // 4. Stores Collection (/stores/{storeId})
+    // - Public display read
+    // - Write allowed only for store owners
+    function isValidStore(data) {
+      return data.keys().hasAll(['id', 'ownerId', 'name', 'city', 'contactPhone', 'verified', 'followerCount', 'rating', 'createdAt'])
+        && data.keys().size() <= 11
+        && data.id is string
+        && data.ownerId == request.auth.uid
+        && data.name is string && data.name.size() <= 100
+        && data.city is string && data.city.size() <= 50
+        && data.contactPhone is string && data.contactPhone.size() <= 30
+        && data.verified == false // Client cannot self-promote to verified
+        && data.rating is number
+        && data.followerCount is number;
+    }
+
+    match /stores/{storeId} {
+      allow read: if true;
+      allow create: if isSignedIn() 
+        && isValidId(storeId) 
+        && isValidStore(incoming())
+        && incoming().rating == 0
+        && incoming().followerCount == 0;
+
+      allow update: if isSignedIn() 
+        && isValidId(storeId) 
+        && isValidStore(incoming())
+        && incoming().ownerId == existing().ownerId
+        && incoming().verified == existing().verified // Stay immutable on client SDK
+        && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'description', 'city', 'contactPhone', 'bannerUrl']);
+    }
+
+    // 5. Products Collection (/products/{productId})
+    // - Public display read
+    // - Anyone can write/update/delete for easy sandbox seeding/management
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // 6. Orders Collection (/orders/{orderId})
+    // - Buyer reads/creates
+    // - Seller reads/updates fulfillment status
+    function isValidOrder(data) {
+      return data.keys().hasAll(['id', 'buyerId', 'buyerName', 'buyerPhone', 'storeId', 'storeName', 'subtotal', 'discount', 'total', 'deliveryMethod', 'status', 'paymentStatus', 'createdAt'])
+        && data.id is string
+        && data.buyerId == request.auth.uid
+        && data.buyerName is string && data.buyerName.size() <= 100
+        && data.buyerPhone is string && data.buyerPhone.size() <= 30
+        && data.storeId is string
+        && data.storeName is string && data.storeName.size() <= 100
+        && data.subtotal is number && data.subtotal >= 0
+        && data.discount is number && data.discount >= 0
+        && data.total is number && data.total >= 0
+        && data.deliveryMethod in ['pickup', 'delivery']
+        && data.status in ['pending', 'processing', 'completed', 'cancelled']
+        && data.paymentStatus in ['unpaid', 'paid'];
+    }
+
+    match /orders/{orderId} {
+      // Allow reading order details only to buyer or seller store owner
+      allow get: if isSignedIn() && (
+        resource.data.buyerId == request.auth.uid ||
+        get(/databases/$(database)/documents/stores/$(resource.data.storeId)).data.ownerId == request.auth.uid
+      );
+
+      // List queries must be filtered
+      allow list: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && isValidId(orderId)
+        && isValidOrder(incoming())
+        && incoming().status == 'pending'
+        && incoming().paymentStatus == 'unpaid';
+
+      allow update: if isSignedIn()
+        && isValidId(orderId)
+        && (
+          // Buyer can cancel order or mark as paid after checkout check
+          (resource.data.buyerId == request.auth.uid && (
+            (incoming().status == 'cancelled' && incoming().diff(existing()).affectedKeys().hasOnly(['status'])) ||
+            (incoming().paymentStatus == 'paid' && incoming().status == 'processing' && incoming().diff(existing()).affectedKeys().hasOnly(['paymentStatus', 'status']))
+          )) ||
+          // Seller store owner can update status (processing/completed/cancelled)
+          (get(/databases/$(database)/documents/stores/$(resource.data.storeId)).data.ownerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status']))
+        );
+    }
+
+    // 7. Carts Collection (/carts/{userId})
+    match /carts/{userId} {
+      allow read, write: if isSignedIn() && isOwner(userId);
+    }
+
+    // 8. Coupons Collection (/coupons/{code})
+    match /coupons/{code} {
+      allow read: if isSignedIn();
+      allow write: if false; // System only (No client direct write)
+    }
+
+    // 9. Messages Collection (/messages/{messageId})
+    function isValidMessage(data) {
+      return data.keys().hasAll(['id', 'chatId', 'senderId', 'receiverId', 'text', 'createdAt', 'read'])
+        && data.senderId == request.auth.uid
+        && data.text is string && data.text.size() <= 2000;
+    }
+
+    match /messages/{messageId} {
+      allow read: if isSignedIn() && (
+        resource.data.senderId == request.auth.uid ||
+        resource.data.receiverId == request.auth.uid
+      );
+      allow create: if isSignedIn() 
+        && isValidId(messageId) 
+        && isValidMessage(incoming());
+      allow update: if isSignedIn() 
+        && resource.data.receiverId == request.auth.uid 
+        && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+    }
+
+    // 10. Notifications Collection (/notifications/{notificationId})
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
+      allow create, delete: if false; // Managed by backend functions / trigger events
+    }
+
+    // 11. CoinTransactions Collection (/coinTransactions/{txId})
+    match /coinTransactions/{txId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if false; // Managed exclusively via Firebase Functions / reward logic
+    }
+
+    // 12. Categories Collection (/categories/{catId})
+    match /categories/{catId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // 13. Reviews Collection (/reviews/{reviewId})
+    function isValidReview(data) {
+      return data.keys().hasAll(['id', 'productId', 'userId', 'userName', 'rating', 'comment', 'createdAt'])
+        && data.userId == request.auth.uid
+        && data.rating is int && data.rating >= 1 && data.rating <= 5
+        && data.comment is string && data.comment.size() <= 1000;
+    }
+
+    match /reviews/{reviewId} {
+      allow read: if true;
+      allow create: if isSignedIn() && isValidId(reviewId) && isValidReview(incoming());
+      allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // 14. Wishlists Collection (/wishlists/{userId})
+    match /wishlists/{userId} {
+      allow read, write: if isSignedIn() && isOwner(userId);
+    }
+
+    // 15. FollowedStores Collection (/followedStores/{followId})
+    match /followedStores/{followId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow create: if isSignedIn() && incoming().userId == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+    }
+
+    // 16. Config Documents Archive
+    match /config/{configId} {
+      allow read: if true;
+      allow write: if false;
+    }
+  }
+}
