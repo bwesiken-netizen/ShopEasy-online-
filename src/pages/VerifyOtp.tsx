@@ -11,7 +11,7 @@ export default function VerifyOtp() {
   const [searchParams] = useSearchParams();
   const rawPhone = searchParams.get('phone') || '';
 
-  const { confirmOtp, sendOtp, loading, user } = useAuthStore();
+  const { confirmOtp, sendOtp, loading, user, isSandboxMode } = useAuthStore();
 
   const [phone, setPhone] = useState(rawPhone || user?.phone || '');
   const [otpDigits, setOtpDigits] = useState<string[]>(Array(6).fill(''));
@@ -191,6 +191,12 @@ export default function VerifyOtp() {
         {errorMsg && (
           <div className="bg-red-50 border border-red-150 p-3.5 rounded-2xl text-[11px] font-bold text-red-650 text-center uppercase tracking-wide">
             ⚠️ {errorMsg}
+          </div>
+        )}
+
+        {isSandboxMode && (
+          <div className="bg-amber-50 border border-amber-250 p-3 rounded-2xl text-[10px] font-bold text-amber-800 text-center uppercase tracking-wider leading-relaxed">
+            ⚡ SANDBOX ACTIVE: Enter any 6-digit code (e.g. 123456) to verify instantly!
           </div>
         )}
 

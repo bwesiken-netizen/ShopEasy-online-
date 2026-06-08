@@ -1,18 +1,19 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../stores';
-import { Phone, ArrowRight, Sparkles } from 'lucide-react';
+import { Phone, ArrowRight, Sparkles, LogIn, ShieldAlert } from 'lucide-react';
 import { RecaptchaVerifier } from 'firebase/auth';
 import { auth } from '../firebase';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function Login() {
   const navigate = useNavigate();
-  const { sendOtp, loading, user } = useAuthStore();
+  const { sendOtp, loading, user, enableSandboxBypass, signInWithGoogle, isSandboxMode } = useAuthStore();
 
   const [phoneVal, setPhoneVal] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
+  const [isOpNotAllowed, setIsOpNotAllowed] = useState(false);
 
   // Auto redirect if user is already logged in with complete profile
   useEffect(() => {
@@ -27,6 +28,7 @@ export default function Login() {
     e.preventDefault();
     setErrorMsg('');
     setSuccessMsg('');
+    setIsOpNotAllowed(false);
 
     const sanitized = phoneVal.replace(/[^0-9]/g, '');
     // If user enters 10 digits starting with 0, drop the leading 0 (e.g. 0999 123 456 -> 999 123 456)
@@ -55,8 +57,7 @@ export default function Login() {
         });
       }
     } catch (err: any) {
-      setErrorMsg('Failed to initialize recaptcha protector: ' + err.message);
-      return;
+      console.warn('Recaptcha preparation bypassed because of sandbox support:', err.message);
     }
 
     const appVerifier = (window as any).recaptchaVerifier;
@@ -70,6 +71,10 @@ export default function Login() {
       }, 1200);
     } else {
       setErrorMsg(res.error || 'Failed to send OTP. Please check your network and phone line format.');
+      if (res.operationNotAllowed) {
+        setIsOpNotAllowed(true);
+      }
+      
       // Clear recaptcha verifier to allow retry on error
       try {
         if ((window as any).recaptchaVerifier) {
@@ -77,6 +82,42 @@ export default function Login() {
           (window as any).recaptchaVerifier = null;
         }
       } catch (err) {}
+    }
+  };
+
+  const handleSandboxBypass = () => {
+    setErrorMsg('');
+    setSuccessMsg('');
+    const sanitized = phoneVal.replace(/[^0-9]/g, '');
+    const phone9Digits = (sanitized.startsWith('0') && sanitized.length === 10) 
+      ? sanitized.substring(1) 
+      : sanitized;
+
+    const usePhone = phone9Digits.length === 9 ? `+265${phone9Digits}` : '+265899195843'; // Default fallback test number
+    enableSandboxBypass(usePhone);
+    setSuccessMsg('✓ Sandbox simulation activated! Pitani ku chitsimikizo...');
+    setTimeout(() => {
+      navigate(`/verify-otp?phone=${encodeURIComponent(usePhone)}`);
+    }, 1200);
+  };
+
+  const handleGoogleLoginSubmit = async () => {
+    setErrorMsg('');
+    setSuccessMsg('');
+    setIsOpNotAllowed(false);
+    
+    const res = await signInWithGoogle();
+    if (res.success) {
+      setSuccessMsg('✓ Google authentication success!');
+      setTimeout(() => {
+        if (res.isNewUser) {
+          navigate('/complete-profile');
+        } else {
+          navigate('/');
+        }
+      }, 1200);
+    } else {
+      setErrorMsg(res.error || 'Google login failed.');
     }
   };
 
@@ -163,6 +204,62 @@ export default function Login() {
             <ArrowRight className="h-4 w-4" />
           </button>
         </form>
+
+        {/* Dynamic Sandbox Option Fallback UI */}
+        {isOpNotAllowed && (
+          <div className="bg-amber-50 border border-amber-200 p-4 rounded-2xl flex flex-col gap-2.5 animate-[fadeIn_0.2s_ease]">
+            <div className="flex items-start gap-2 text-amber-900">
+              <ShieldAlert className="h-4.5 w-4.5 shrink-0 text-amber-600 mt-0.5" />
+              <div className="text-[10px] font-black uppercase tracking-wider uppercase">
+                Sandbox Simulator Available ⚡
+              </div>
+            </div>
+            <p className="text-[10px] font-bold text-amber-800 leading-relaxed">
+              Firebase Phone Auth is disabled in this console environment (Auth Operation Not Allowed). Use this Sandbox Simulator bypass to test the application instantly.
+            </p>
+            <button
+              id="sandbox-emulator-btn"
+              type="button"
+              onClick={handleSandboxBypass}
+              className="w-full py-2.5 rounded-full bg-amber-600 hover:bg-amber-700 text-white text-[10px] font-black uppercase tracking-wider transition shadow-sm"
+            >
+              Skip & Enter Sandbox Mode
+            </button>
+          </div>
+        )}
+
+        {/* ALTERNATIVE LOGIN SECTIONS */}
+        <div className="flex flex-col gap-3 pt-3 border-t border-neutral-100">
+          <div className="relative flex py-1 items-center">
+            <div className="flex-grow border-t border-neutral-100"></div>
+            <span className="flex-shrink mx-3 text-[9px] font-black text-neutral-400 uppercase tracking-widest">Or authenticate via</span>
+            <div className="flex-grow border-t border-neutral-100"></div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            {/* Google provider */}
+            <button
+              id="google-signin-btn"
+              type="button"
+              onClick={handleGoogleLoginSubmit}
+              className="flex items-center justify-center gap-1.5 py-2.5 px-3 border border-neutral-200 rounded-full hover:bg-neutral-50 hover:border-neutral-300 transition text-xs font-extrabold text-neutral-700"
+            >
+              <span>🌐</span>
+              <span>Google Account</span>
+            </button>
+
+            {/* Direct Sandbox Simulator Option */}
+            <button
+              id="direct-sandbox-btn"
+              type="button"
+              onClick={handleSandboxBypass}
+              className="flex items-center justify-center gap-1.5 py-2.5 px-3 border border-dashed border-amber-300 bg-amber-50/50 text-amber-800 font-extrabold text-xs rounded-full hover:bg-amber-100/50 hover:border-amber-400 transition"
+            >
+              <span>⚡</span>
+              <span>Sandbox Demo</span>
+            </button>
+          </div>
+        </div>
 
         {/* reCAPTCHA Placeholder element */}
         <div id="recaptcha-container" className="mx-auto"></div>

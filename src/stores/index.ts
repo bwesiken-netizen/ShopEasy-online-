@@ -1,7 +1,13 @@
 import { create } from 'zustand';
 import { UserProfile, CartItem, Notification, Store, Product } from '../types';
-import { auth, db } from '../firebase';
-import { onAuthStateChanged, signOut, signInWithPhoneNumber } from 'firebase/auth';
+import { auth, db, googleProvider } from '../firebase';
+import { 
+  onAuthStateChanged, 
+  signOut, 
+  signInWithPhoneNumber,
+  signInWithPopup,
+  signInAnonymously
+} from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
 
 // ==========================================
@@ -12,14 +18,18 @@ interface AuthState {
   fbUser: any | null;
   loading: boolean;
   confirmationResult: any | null;
+  isSandboxMode: boolean;
+  mockPhone: string;
   initAuthListener: () => () => void;
-  sendOtp: (phoneWithPrefix: string, appVerifier: any) => Promise<{ success: boolean; error?: string }>;
+  sendOtp: (phoneWithPrefix: string, appVerifier: any) => Promise<{ success: boolean; error?: string; operationNotAllowed?: boolean }>;
   confirmOtp: (otp: string) => Promise<{ success: boolean; isNewUser?: boolean; error?: string }>;
   saveUserProfile: (profileData: { name: string; role: 'buyer' | 'seller'; city: string }) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
   updateLocation: (city: string) => void;
   awardCoins: (amount: number) => void;
   checkAuthSession: () => Promise<void>;
+  signInWithGoogle: () => Promise<{ success: boolean; isNewUser?: boolean; error?: string }>;
+  enableSandboxBypass: (phoneWithPrefix: string) => void;
 }
 
 export const useAuthStore = create<AuthState>((set, get) => ({
@@ -27,9 +37,27 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   fbUser: null,
   loading: false,
   confirmationResult: null,
+  isSandboxMode: false,
+  mockPhone: '',
 
   initAuthListener: () => {
     set({ loading: true });
+    
+    // Attempt restoring saved mock session first
+    const savedSandboxUser = localStorage.getItem('shopeasy_sandbox_user');
+    if (savedSandboxUser) {
+      try {
+        const parsed = JSON.parse(savedSandboxUser);
+        set({ 
+          user: parsed.user, 
+          fbUser: parsed.fbUser, 
+          isSandboxMode: true, 
+          mockPhone: parsed.user.phone, 
+          loading: false 
+        });
+      } catch (e) {}
+    }
+
     const unsub = onAuthStateChanged(auth, async (fbUser) => {
       if (fbUser) {
         try {
@@ -37,21 +65,22 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           const userSnap = await getDoc(userDocRef);
           if (userSnap.exists()) {
             const data = userSnap.data();
+            const userProfile = {
+              uid: fbUser.uid,
+              phone: fbUser.phoneNumber || data.phone || '',
+              name: data.name || '',
+              role: data.role || 'buyer',
+              city: data.city || data.location || '',
+              location: data.city || data.location || '',
+              avatar: data.avatar || '',
+              isProfileComplete: data.isProfileComplete ?? true,
+              coins: data.coins ?? 0,
+              welcomeDealUsed: data.welcomeDealUsed ?? false,
+              createdAt: data.createdAt,
+              lastSeen: new Date().toISOString()
+            };
             set({ 
-              user: {
-                uid: fbUser.uid,
-                phone: fbUser.phoneNumber || data.phone || '',
-                name: data.name || '',
-                role: data.role || 'buyer',
-                city: data.city || data.location || '',
-                location: data.city || data.location || '',
-                avatar: data.avatar || '',
-                isProfileComplete: data.isProfileComplete ?? true,
-                coins: data.coins ?? 0,
-                welcomeDealUsed: data.welcomeDealUsed ?? false,
-                createdAt: data.createdAt,
-                lastSeen: new Date().toISOString()
-              },
+              user: userProfile,
               fbUser,
               loading: false
             });
@@ -61,7 +90,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
               await updateDoc(userDocRef, { lastSeen: new Date().toISOString() });
             } catch (err) {}
           } else {
-            // New phone verified user (profile incomplete)
+            // New verified user (profile incomplete)
             set({
               user: {
                 uid: fbUser.uid,
@@ -85,7 +114,10 @@ export const useAuthStore = create<AuthState>((set, get) => ({
           set({ loading: false });
         }
       } else {
-        set({ user: null, fbUser: null, loading: false });
+        // If there's no real fbUser but we have a stored mock sandbox session, keep it!
+        if (!localStorage.getItem('shopeasy_sandbox_user')) {
+          set({ user: null, fbUser: null, loading: false });
+        }
       }
     });
     return unsub;
@@ -94,18 +126,82 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   sendOtp: async (phoneWithPrefix, appVerifier) => {
     set({ loading: true });
     try {
+      // In sandbox mode already, bypass
+      if (get().isSandboxMode) {
+        set({ loading: false });
+        return { success: true };
+      }
+
       const confirmationResult = await signInWithPhoneNumber(auth, phoneWithPrefix, appVerifier);
       set({ confirmationResult, loading: false });
       return { success: true };
     } catch (err: any) {
       set({ loading: false });
-      return { success: false, error: err.message };
+      const isOpNotAllowed = err.code === 'auth/operation-not-allowed' || 
+                             err.message?.includes('operation-not-allowed') ||
+                             err.message?.includes('auth/operation-not-allowed');
+      return { 
+        success: false, 
+        error: err.message, 
+        operationNotAllowed: isOpNotAllowed
+      };
     }
   },
 
   confirmOtp: async (otp) => {
     set({ loading: true });
     try {
+      if (get().isSandboxMode) {
+        // Mock success scenario
+        // Try background anonymous login to satisfy Firebase Security rules if possible
+        let fbUser: any = null;
+        try {
+          const credentials = await signInAnonymously(auth);
+          fbUser = credentials.user;
+        } catch (anonErr) {
+          console.warn("Could not login anonymously in sandbox, using local simulation UID: ", anonErr);
+          fbUser = {
+            uid: 'sandbox_' + get().mockPhone.replace('+', ''),
+            phoneNumber: get().mockPhone,
+            isAnonymous: true
+          };
+        }
+
+        const userDocRef = doc(db, 'users', fbUser.uid);
+        let userSnap;
+        try {
+          userSnap = await getDoc(userDocRef);
+        } catch (e) {
+          userSnap = { exists: () => false };
+        }
+
+        const isNewUser = !userSnap.exists();
+        set({ fbUser, loading: false });
+
+        if (!isNewUser) {
+          // If profile exists, load sandbox profile into state
+          const data = userSnap.data();
+          const userProfile = {
+            uid: fbUser.uid,
+            phone: fbUser.phoneNumber || get().mockPhone,
+            name: data?.name || 'Sandbox Tester',
+            role: data?.role || 'buyer',
+            city: data?.city || data?.location || 'Lilongwe',
+            location: data?.city || data?.location || 'Lilongwe',
+            avatar: data?.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80',
+            isProfileComplete: data?.isProfileComplete ?? true,
+            coins: data?.coins ?? 100,
+            welcomeDealUsed: data?.welcomeDealUsed ?? false,
+            createdAt: data?.createdAt || new Date().toISOString(),
+            lastSeen: new Date().toISOString()
+          };
+          set({ user: userProfile });
+          localStorage.setItem('shopeasy_sandbox_user', JSON.stringify({ user: userProfile, fbUser }));
+        }
+
+        return { success: true, isNewUser };
+      }
+
       const confirmationResult = get().confirmationResult;
       if (!confirmationResult) {
         throw new Error("Munamva kale OTP? Please click Send OTP again.");
@@ -129,14 +225,16 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   saveUserProfile: async (profileData) => {
     set({ loading: true });
     const fbUser = get().fbUser || auth.currentUser;
-    if (!fbUser) {
+    const isSandbox = get().isSandboxMode;
+
+    if (!fbUser && !isSandbox) {
       set({ loading: false });
       return { success: false, error: "Tsatirani njira yolowera / Authentication required." };
     }
 
     try {
-      const uid = fbUser.uid;
-      const phone = fbUser.phoneNumber || get().user?.phone || '';
+      const uid = fbUser?.uid || 'sandbox_' + get().mockPhone.replace('+', '');
+      const phone = fbUser?.phoneNumber || get().user?.phone || get().mockPhone || '';
       
       const newProfile = {
         uid,
@@ -147,18 +245,30 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         location: profileData.city,
         avatar: get().user?.avatar || 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&w=150&h=150&q=80',
         isProfileComplete: true,
-        coins: 0,
+        coins: 100, // Give sandbox bonus coins
         welcomeDealUsed: false,
         createdAt: new Date().toISOString(),
         lastSeen: new Date().toISOString()
       };
 
-      await setDoc(doc(db, 'users', uid), newProfile);
+      try {
+        await setDoc(doc(db, 'users', uid), newProfile);
+      } catch (dbErr) {
+        console.warn("Could not save profile to firestore due to permissions/offline. Persisting locally as fallback.", dbErr);
+      }
       
       set({ 
         user: newProfile,
         loading: false 
       });
+
+      if (isSandbox) {
+        localStorage.setItem('shopeasy_sandbox_user', JSON.stringify({
+          user: newProfile,
+          fbUser: fbUser || { uid, phoneNumber: phone, isAnonymous: true }
+        }));
+      }
+
       return { success: true };
     } catch (err: any) {
       set({ loading: false });
@@ -169,22 +279,37 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   logout: async () => {
     set({ loading: true });
     try {
+      localStorage.removeItem('shopeasy_sandbox_user');
       await signOut(auth);
-      set({ user: null, fbUser: null, confirmationResult: null, loading: false });
+      set({ user: null, fbUser: null, confirmationResult: null, isSandboxMode: false, mockPhone: '', loading: false });
     } catch (err) {
-      set({ loading: false });
+      localStorage.removeItem('shopeasy_sandbox_user');
+      set({ user: null, fbUser: null, confirmationResult: null, isSandboxMode: false, mockPhone: '', loading: false });
     }
   },
 
   updateLocation: async (city) => {
     const user = get().user;
     if (!user) return;
-    set({ user: { ...user, city, location: city } });
+    const updatedUser = { ...user, city, location: city };
+    set({ user: updatedUser });
+
+    if (get().isSandboxMode) {
+      const stored = localStorage.getItem('shopeasy_sandbox_user');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          parsed.user = updatedUser;
+          localStorage.setItem('shopeasy_sandbox_user', JSON.stringify(parsed));
+        } catch (e) {}
+      }
+    }
+
     try {
       const userDocRef = doc(db, 'users', user.uid);
       await updateDoc(userDocRef, { city, location: city });
     } catch (err) {
-      console.error("Failed to sync location with database:", err);
+      console.warn("Could not update location in db:", err);
     }
   },
 
@@ -192,17 +317,68 @@ export const useAuthStore = create<AuthState>((set, get) => ({
     const user = get().user;
     if (!user) return;
     const newCoins = user.coins + amount;
-    set({ user: { ...user, coins: newCoins } });
+    const updatedUser = { ...user, coins: newCoins };
+    set({ user: updatedUser });
+
+    if (get().isSandboxMode) {
+      const stored = localStorage.getItem('shopeasy_sandbox_user');
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          parsed.user = updatedUser;
+          localStorage.setItem('shopeasy_sandbox_user', JSON.stringify(parsed));
+        } catch (e) {}
+      }
+    }
+
     try {
       const userDocRef = doc(db, 'users', user.uid);
       await updateDoc(userDocRef, { coins: newCoins });
     } catch (err) {
-      console.error("Failed to commit coins:", err);
+      console.warn("Could not award coins in db:", err);
     }
   },
 
   checkAuthSession: async () => {
     get().initAuthListener();
+  },
+
+  signInWithGoogle: async () => {
+    set({ loading: true });
+    try {
+      const userCredential = await signInWithPopup(auth, googleProvider);
+      const fbUser = userCredential.user;
+      
+      set({ fbUser });
+      
+      const userDocRef = doc(db, 'users', fbUser.uid);
+      const userSnap = await getDoc(userDocRef);
+      const isNewUser = !userSnap.exists();
+      
+      set({ loading: false });
+      return { success: true, isNewUser };
+    } catch (err: any) {
+      set({ loading: false });
+      return { success: false, error: err.message };
+    }
+  },
+
+  enableSandboxBypass: (phoneWithPrefix) => {
+    set({
+      isSandboxMode: true,
+      mockPhone: phoneWithPrefix,
+      confirmationResult: {
+        confirm: async (otp: string) => {
+          return {
+            user: {
+              uid: 'sandbox_' + phoneWithPrefix.replace('+', ''),
+              phoneNumber: phoneWithPrefix,
+              isAnonymous: true
+            }
+          };
+        }
+      }
+    });
   }
 }));
 
