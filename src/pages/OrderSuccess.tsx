@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useCartStore, useAuthStore } from '../stores';
 import { db } from '../firebase';
-import { doc, updateDoc, getDoc } from 'firebase/firestore';
+import { doc, updateDoc, getDoc, setDoc } from 'firebase/firestore';
 import { Check, Copy, ShoppingBag, ArrowRight, Home, Coins, Calendar, Info, Clock, CheckCircle } from 'lucide-react';
 
 export default function OrderSuccess() {
@@ -53,11 +53,116 @@ export default function OrderSuccess() {
             const orderSnap = await getDoc(orderDocRef);
             
             if (orderSnap.exists()) {
-              await updateDoc(orderDocRef, {
-                paymentStatus: 'paid',
-                status: 'processing'
-              });
-              console.log('[Invoice Verify] Order status updated to PAID and PROCESSING in Firestore.');
+              if (orderSnap.data().paymentStatus !== 'paid') {
+                await updateDoc(orderDocRef, {
+                  paymentStatus: 'paid',
+                  status: 'paid'
+                });
+                console.log('[Invoice Verify] Existing order updated to paid.');
+              }
+            } else {
+              // Retrieve the checkout intent from 'checkout_intents' collection
+              const intentDocRef = doc(db, 'checkout_intents', txRef);
+              const intentSnap = await getDoc(intentDocRef);
+
+              if (intentSnap.exists()) {
+                const intentData = intentSnap.data() as any;
+                const finalizedOrder = {
+                  ...intentData,
+                  status: 'paid',
+                  paymentStatus: 'paid',
+                  createdAt: intentData.createdAt || new Date().toISOString()
+                };
+
+                // Create the finalized Order document in Firestore
+                await setDoc(orderDocRef, finalizedOrder);
+                console.log('[Invoice Verify] Created finalized paid order document from checkout intent:', txRef);
+
+                // Try to decrement product stock in Firestore
+                try {
+                  const items = intentData.items || [];
+                  for (const item of items) {
+                    if (item.productId) {
+                      const pDocRef = doc(db, 'products', item.productId);
+                      const pSnap = await getDoc(pDocRef);
+                      if (pSnap.exists()) {
+                        const curStock = pSnap.data().stock || 0;
+                        const qtyBought = item.quantity || item.qty || 1;
+                        await updateDoc(pDocRef, {
+                          stock: Math.max(0, curStock - qtyBought)
+                        });
+                      }
+                    }
+                  }
+                } catch (stockErr) {
+                  console.warn('[Invoice Verify] Non-blocking stock decrement error:', stockErr);
+                }
+
+                // Try to create real notifications in Firestore
+                try {
+                  const buyerNotificationRef = doc(db, 'notifications', `notif_${txRef}_buyer_${Date.now()}`);
+                  await setDoc(buyerNotificationRef, {
+                    id: buyerNotificationRef.id,
+                    userId: finalizedOrder.buyerId || 'anonymous_buyer',
+                    title: 'Payment Confirmed! 🎉',
+                    body: `Zikomo! We received your payment of MWK ${finalizedOrder.total?.toLocaleString()} for Order #${txRef}.`,
+                    type: 'order',
+                    read: false,
+                    createdAt: new Date().toISOString()
+                  });
+
+                  // Seller notification
+                  const sellers = [...new Set((finalizedOrder.items || []).map((i: any) => i.storeId || i.sellerId).filter(Boolean))];
+                  for (const sId of sellers) {
+                    const sellerNotificationRef = doc(db, 'notifications', `notif_${txRef}_seller_${sId as string}_${Date.now()}`);
+                    await setDoc(sellerNotificationRef, {
+                      id: sellerNotificationRef.id,
+                      userId: sId,
+                      title: 'New Paid Order Recieved! 🏪',
+                      body: `Chonde tumizani katundu! You received a paid order #${txRef} of MWK ${finalizedOrder.total?.toLocaleString()}.`,
+                      type: 'order',
+                      read: false,
+                      createdAt: new Date().toISOString()
+                    });
+                  }
+                } catch (notifErr) {
+                  console.warn('[Invoice Verify] Non-blocking notification error:', notifErr);
+                }
+
+              } else {
+                // Fallback document setup if checkout intent snapshot is absent
+                const fbItems = [{
+                  productId: 'p_unknown',
+                  title: 'ShopEasy Malawian Order',
+                  image: '📦',
+                  price: total,
+                  qty: 1,
+                  sellerId: 'general_store'
+                }];
+
+                const fallbackOrder = {
+                  id: txRef,
+                  buyerId: user?.uid || 'anonymous_buyer',
+                  buyerName,
+                  buyerPhone,
+                  items: fbItems,
+                  deliveryType,
+                  deliveryInfo: {
+                    city,
+                    area,
+                    landmark: ''
+                  },
+                  status: 'paid',
+                  paymentStatus: 'paid',
+                  subtotal,
+                  discount,
+                  total,
+                  createdAt: new Date().toISOString()
+                };
+
+                await setDoc(orderDocRef, fallbackOrder);
+                console.log('[Invoice Verify] Created finalized paid order document from URL parameters fallback:', txRef);
+              }
             }
           } catch (dbErr) {
             console.warn('[Invoice Verify] Non-blocking database update, fallback OK:', dbErr);

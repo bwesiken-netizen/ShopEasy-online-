@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { NavLink, useNavigate, useLocation } from 'react-router-dom';
 import { useCartStore, useNotificationStore, useAuthStore } from '../stores';
 import { 
@@ -7,6 +7,8 @@ import {
   Award, Store, MessageSquare, ShieldAlert, Settings
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { collection, query, where, onSnapshot } from 'firebase/firestore';
+import { db } from '../firebase';
 
 interface MobileContainerProps {
   children: React.ReactNode;
@@ -23,8 +25,27 @@ export default function MobileContainer({ children }: MobileContainerProps) {
   const [showCenterMenu, setShowCenterMenu] = useState(false);
   const [cameraScanActive, setCameraScanActive] = useState(false);
   const [searchVal, setSearchVal] = useState('');
+  const [realUnreadCount, setRealUnreadCount] = useState(0);
 
-  const unreadNotifications = notifications.filter((n) => !n.read).length;
+  useEffect(() => {
+    if (!user) {
+      setRealUnreadCount(0);
+      return;
+    }
+    const q = query(
+      collection(db, 'notifications'),
+      where('userId', '==', user.uid),
+      where('read', '==', false)
+    );
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      setRealUnreadCount(snapshot.size);
+    }, (error) => {
+      console.warn("Error listening to real-time notification counts:", error);
+    });
+    return () => unsubscribe();
+  }, [user]);
+
+  const unreadNotifications = user ? realUnreadCount : notifications.filter((n) => !n.read).length;
   const cartCount = items.reduce((acc, item) => acc + item.quantity, 0);
 
   const handleSearchSubmit = (e: React.FormEvent) => {
@@ -35,8 +56,7 @@ export default function MobileContainer({ children }: MobileContainerProps) {
   };
 
   const handleBellClick = () => {
-    markAllRead();
-    navigate('/account'); // View notifications inside account panel
+    navigate('/messages');
   };
 
   // Simulate local camera scanning for Malawian barcoded items or ShopEasy seller coupons

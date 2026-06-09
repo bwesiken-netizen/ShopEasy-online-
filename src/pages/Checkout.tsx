@@ -127,17 +127,17 @@ export default function Checkout() {
     };
 
     try {
-      // 1. Save Pending Order to Firestore
-      const orderPath = `orders/${orderId}`;
-      await setDoc(doc(db, 'orders', orderId), checkoutOrderDoc);
-      console.log('Pending Order created successfully in Firestore:', orderId);
+      // 1. Save Pending Order to Firestore as CHECKOUT INTENT (not in orders collection yet)
+      const intentPath = `checkout_intents/${orderId}`;
+      await setDoc(doc(db, 'checkout_intents', orderId), checkoutOrderDoc);
+      console.log('Pending Checkout Intent created successfully in Firestore:', orderId);
     } catch (saveErr) {
-      console.error('Failed to pre-save pending order in Firestore:', saveErr);
+      console.error('Failed to pre-save pending checkout intent in Firestore:', saveErr);
       // Fallback handle error following skill guidelines
       try {
-        handleFirestoreError(saveErr, OperationType.WRITE, `orders/${orderId}`);
+        handleFirestoreError(saveErr, OperationType.WRITE, `checkout_intents/${orderId}`);
       } catch (e: any) {
-        setErrorText('Failed to initialize order record: ' + e.message);
+        setErrorText('Failed to initialize checkout intent: ' + e.message);
         setIsInitiatingPayment(false);
         return;
       }

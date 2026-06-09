@@ -63,8 +63,25 @@ service cloud.firestore {
         allow read, write: if isSignedIn() && isOwner(userId);
       }
 
+      match /wishlist/{productId} {
+        allow read, write: if isSignedIn() && isOwner(userId);
+      }
+
+      match /followedStores/{storeId} {
+        allow read, write: if isSignedIn() && isOwner(userId);
+      }
+
       match /searchHistory/{historyId} {
         allow read, write: if isSignedIn() && isOwner(userId);
+      }
+
+      match /settings/{settingId} {
+        allow read, write: if isSignedIn() && isOwner(userId);
+      }
+
+      match /gameStats/{dateStr} {
+        allow read: if isSignedIn() && isOwner(userId);
+        allow write: if false; // System only (No client direct write)
       }
     }
 
@@ -128,37 +145,16 @@ service cloud.firestore {
     }
 
     match /orders/{orderId} {
-      // Allow reading order details only to buyer or seller store owner
-      allow get: if isSignedIn() && (
-        resource.data.buyerId == request.auth.uid ||
-        get(/databases/$(database)/documents/stores/$(resource.data.storeId)).data.ownerId == request.auth.uid
-      );
-
-      // List queries must be filtered
-      allow list: if isSignedIn();
-
-      allow create: if isSignedIn()
-        && isValidId(orderId)
-        && isValidOrder(incoming())
-        && incoming().status == 'pending'
-        && incoming().paymentStatus == 'unpaid';
-
-      allow update: if isSignedIn()
-        && isValidId(orderId)
-        && (
-          // Buyer can cancel order or mark as paid after checkout check
-          (resource.data.buyerId == request.auth.uid && (
-            (incoming().status == 'cancelled' && incoming().diff(existing()).affectedKeys().hasOnly(['status'])) ||
-            (incoming().paymentStatus == 'paid' && incoming().status == 'processing' && incoming().diff(existing()).affectedKeys().hasOnly(['paymentStatus', 'status']))
-          )) ||
-          // Seller store owner can update status (processing/completed/cancelled)
-          (get(/databases/$(database)/documents/stores/$(resource.data.storeId)).data.ownerId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['status']))
-        );
+      allow read, write: if isSignedIn();
     }
 
     // 7. Carts Collection (/carts/{userId})
     match /carts/{userId} {
-      allow read, write: if isSignedIn() && isOwner(userId);
+      allow read, write: if true;
+
+      match /{document=**} {
+        allow read, write: if true;
+      }
     }
 
     // 8. Coupons Collection (/coupons/{code})
@@ -189,15 +185,51 @@ service cloud.firestore {
 
     // 10. Notifications Collection (/notifications/{notificationId})
     match /notifications/{notificationId} {
-      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow update: if isSignedIn() && resource.data.userId == request.auth.uid && incoming().diff(existing()).affectedKeys().hasOnly(['read']);
-      allow create, delete: if false; // Managed by backend functions / trigger events
+      allow read, update, delete: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn();
+    }
+
+    // 19. Conversations Collection (/conversations/{conversationId})
+    match /conversations/{conversationId} {
+      allow read: if isSignedIn() && (
+        resource.data.buyerId == request.auth.uid ||
+        resource.data.sellerId == request.auth.uid
+      );
+      allow create: if isSignedIn() && (
+        incoming().buyerId == request.auth.uid ||
+        incoming().sellerId == request.auth.uid
+      );
+      allow update: if isSignedIn() && (
+        resource.data.buyerId == request.auth.uid ||
+        resource.data.sellerId == request.auth.uid
+      );
+
+      match /messages/{messageId} {
+        allow read: if isSignedIn() && (
+          get(/databases/$(database)/documents/conversations/$(conversationId)).data.buyerId == request.auth.uid ||
+          get(/databases/$(database)/documents/conversations/$(conversationId)).data.sellerId == request.auth.uid
+        );
+        allow create: if isSignedIn() && (
+          get(/databases/$(database)/documents/conversations/$(conversationId)).data.buyerId == request.auth.uid ||
+          get(/databases/$(database)/documents/conversations/$(conversationId)).data.sellerId == request.auth.uid
+        );
+        allow update: if isSignedIn() && (
+          get(/databases/$(database)/documents/conversations/$(conversationId)).data.buyerId == request.auth.uid ||
+          get(/databases/$(database)/documents/conversations/$(conversationId)).data.sellerId == request.auth.uid
+        );
+      }
     }
 
     // 11. CoinTransactions Collection (/coinTransactions/{txId})
     match /coinTransactions/{txId} {
-      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow read: if isSignedIn() && (resource == null || resource.data.userId == request.auth.uid);
       allow write: if false; // Managed exclusively via Firebase Functions / reward logic
+    }
+
+    // 20. CoinLeaderboard Collection (/coinLeaderboard/{userId})
+    match /coinLeaderboard/{userId} {
+      allow read: if isSignedIn();
+      allow write: if false; // System only (No client direct write)
     }
 
     // 12. Categories Collection (/categories/{catId})
@@ -215,9 +247,7 @@ service cloud.firestore {
     }
 
     match /reviews/{reviewId} {
-      allow read: if true;
-      allow create: if isSignedIn() && isValidId(reviewId) && isValidReview(incoming());
-      allow update, delete: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow read, write: if isSignedIn();
     }
 
     // 14. Wishlists Collection (/wishlists/{userId})
@@ -242,6 +272,16 @@ service cloud.firestore {
     match /config/{configId} {
       allow read: if true;
       allow write: if false;
+    }
+
+    // 17. Checkout Intents Collection (/checkout_intents/{orderId})
+    match /checkout_intents/{orderId} {
+      allow read, write: if true;
+    }
+
+    // 18. Disputes Collection (/disputes/{orderId})
+    match /disputes/{orderId} {
+      allow read, write: if isSignedIn();
     }
   }
 }

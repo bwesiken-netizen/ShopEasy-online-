@@ -10,7 +10,7 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, updateDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, deleteDoc, getDocs, collection, writeBatch } from 'firebase/firestore';
 
 // ==========================================
 // 1. AUTH STORE
@@ -88,6 +88,7 @@ export const useAuthStore = create<AuthState>((set, get) => ({
               fbUser,
               loading: false
             });
+            useCartStore.getState().syncFromFirestore(fbUser.uid);
             
             // Sync last seen to db
             try {
@@ -431,11 +432,14 @@ interface CartState {
   items: CartItem[];
   couponCode: string;
   discountPercent: number;
-  addItem: (product: Product, quantity?: number) => void;
-  removeItem: (productId: string) => void;
-  updateQuantity: (productId: string, quantity: number) => void;
+  loading: boolean;
+  addItem: (product: any, variant?: any, qty?: number) => Promise<void>;
+  removeItem: (productId: string, variant?: any) => Promise<void>;
+  updateQty: (productId: string, variant: any, qty: number) => Promise<void>;
+  updateQuantity: (productId: string, quantity: number) => Promise<void>;
   applyCoupon: (code: string) => boolean;
-  clearCart: () => void;
+  clearCart: () => Promise<void>;
+  syncFromFirestore: (uid: string) => Promise<void>;
   getTotals: () => {
     subtotal: number;
     discount: number;
@@ -447,49 +451,213 @@ export const useCartStore = create<CartState>((set, get) => ({
   items: [],
   couponCode: '',
   discountPercent: 0,
+  loading: false,
 
-  addItem: (product, quantity = 1) => set((state) => {
-    const existing = state.items.find((item) => item.productId === product.id);
+  addItem: async (product, variant, qty = 1) => {
+    let actualQty = 1;
+    let selectedColor = '';
+    let selectedSize = '';
+    
+    if (typeof variant === 'number') {
+      actualQty = variant;
+    } else if (typeof variant === 'object' && variant !== null) {
+      selectedColor = (variant as any).selectedColor || (variant as any).color || '';
+      selectedSize = (variant as any).selectedSize || (variant as any).size || '';
+      actualQty = Number(qty) || 1;
+    } else if (typeof variant === 'string' && variant) {
+      selectedColor = variant;
+      actualQty = Number(qty) || 1;
+    } else {
+      actualQty = Number(qty) || 1;
+    }
+
+    if (!selectedColor && product.selectedColor) selectedColor = product.selectedColor;
+    if (!selectedSize && product.selectedSize) selectedSize = product.selectedSize;
+
+    const variantId = (selectedColor || selectedSize) 
+      ? `${selectedColor || 'none'}_${selectedSize || 'none'}` 
+      : 'default';
+    const compositeKey = `${product.id}_${variantId}`;
+
+    const existingItems = get().items;
+    const existing = existingItems.find((item) => {
+      const itemVariantId = (item.selectedColor || item.selectedSize)
+        ? `${item.selectedColor || 'none'}_${item.selectedSize || 'none'}`
+        : 'default';
+      return item.productId === product.id && itemVariantId === variantId;
+    });
+
+    let updatedItems: any[] = [];
+    let newQty = actualQty;
+
     if (existing) {
-      return {
-        items: state.items.map((item) =>
-          item.productId === product.id
-            ? { ...item, quantity: item.quantity + quantity }
-            : item
-        )
+      newQty = Math.min((existing.qty || existing.quantity || 0) + actualQty, product.stock || 999);
+      updatedItems = existingItems.map((item) => {
+        const itemVariantId = (item.selectedColor || item.selectedSize)
+          ? `${item.selectedColor || 'none'}_${item.selectedSize || 'none'}`
+          : 'default';
+        if (item.productId === product.id && itemVariantId === variantId) {
+          return { ...item, qty: newQty, quantity: newQty };
+        }
+        return item;
+      });
+    } else {
+      const title = product.title || product.name || '';
+      const image = product.imageUrl || product.images?.[0] || '📦';
+      const newItem = {
+        productId: product.id,
+        title,
+        productName: title,
+        image,
+        imageUrl: image,
+        price: product.price,
+        originalPrice: product.originalPrice || product.price,
+        discountPercent: product.discountPercent || 0,
+        sellerId: product.sellerId || product.storeId || '',
+        storeId: product.storeId || product.sellerId || '',
+        storeName: product.storeName || product.sellerName || '',
+        selectedColor,
+        selectedSize,
+        qty: actualQty,
+        quantity: actualQty,
+        stock: product.stock || 250,
+        freeDelivery: product.freeDelivery || false,
+        city: product.city || ''
       };
+      updatedItems = [...existingItems, newItem];
     }
-    const newItem: CartItem = {
-      productId: product.id,
-      productName: product.name,
-      price: product.price,
-      quantity,
-      imageUrl: product.imageUrl,
-      storeId: product.storeId,
-      storeName: product.storeName,
-      city: product.city
-    };
-    return { items: [...state.items, newItem] };
-  }),
 
-  removeItem: (productId) => set((state) => ({
-    items: state.items.filter((item) => item.productId !== productId)
-  })),
+    set({ items: updatedItems });
 
-  updateQuantity: (productId, quantity) => set((state) => {
-    if (quantity <= 0) {
-      return { items: state.items.filter((item) => item.productId !== productId) };
+    // Sync to Firestore if user logged in
+    const uid = auth.currentUser?.uid || useAuthStore.getState().user?.uid;
+    if (uid) {
+      try {
+        const itemDocRef = doc(db, 'carts', uid, 'items', compositeKey);
+        const itemObj = updatedItems.find((item) => {
+          const itemVariantId = (item.selectedColor || item.selectedSize)
+            ? `${item.selectedColor || 'none'}_${item.selectedSize || 'none'}`
+            : 'default';
+          return item.productId === product.id && itemVariantId === variantId;
+        });
+        if (itemObj) {
+          await setDoc(itemDocRef, itemObj);
+        }
+      } catch (err) {
+        console.error("Firestore sync error adding to cart: ", err);
+      }
     }
-    return {
-      items: state.items.map((item) =>
-        item.productId === productId ? { ...item, quantity } : item
-      )
-    };
-  }),
+  },
+
+  removeItem: async (productId, variant) => {
+    let selectedColor = '';
+    let selectedSize = '';
+    if (typeof variant === 'object' && variant !== null) {
+      selectedColor = variant.selectedColor || variant.color || '';
+      selectedSize = variant.selectedSize || variant.size || '';
+    } else if (typeof variant === 'string') {
+      selectedColor = variant;
+    }
+
+    const currentItems = get().items;
+    let filtered: any[] = [];
+    let keysToDelete: string[] = [];
+
+    if (variant !== undefined) {
+      const variantId = (selectedColor || selectedSize)
+        ? `${selectedColor || 'none'}_${selectedSize || 'none'}`
+        : 'default';
+      const compositeKey = `${productId}_${variantId}`;
+      filtered = currentItems.filter((item) => {
+        const itemVariantId = (item.selectedColor || item.selectedSize)
+          ? `${item.selectedColor || 'none'}_${item.selectedSize || 'none'}`
+          : 'default';
+        const itemKey = `${item.productId}_${itemVariantId}`;
+        if (itemKey === compositeKey) {
+          keysToDelete.push(itemKey);
+          return false;
+        }
+        return true;
+      });
+    } else {
+      filtered = currentItems.filter((item) => {
+        if (item.productId === productId) {
+          const itemVariantId = (item.selectedColor || item.selectedSize)
+            ? `${item.selectedColor || 'none'}_${item.selectedSize || 'none'}`
+            : 'default';
+          keysToDelete.push(`${item.productId}_${itemVariantId}`);
+          return false;
+        }
+        return true;
+      });
+    }
+
+    set({ items: filtered });
+
+    const uid = auth.currentUser?.uid || useAuthStore.getState().user?.uid;
+    if (uid && keysToDelete.length > 0) {
+      for (const key of keysToDelete) {
+        try {
+          await deleteDoc(doc(db, 'carts', uid, 'items', key));
+        } catch (e) {
+          console.error("Firestore delete item failed:", e);
+        }
+      }
+    }
+  },
+
+  updateQty: async (productId, variant, qty) => {
+    let actualQty = qty;
+    let selectedColor = '';
+    let selectedSize = '';
+
+    if (typeof variant === 'number') {
+      actualQty = variant;
+    } else if (typeof variant === 'object' && variant !== null) {
+      selectedColor = variant.selectedColor || variant.color || '';
+      selectedSize = variant.selectedSize || variant.size || '';
+    } else if (typeof variant === 'string') {
+      selectedColor = variant;
+    }
+
+    if (actualQty < 1) {
+      await get().removeItem(productId, variant);
+      return;
+    }
+
+    const variantId = (selectedColor || selectedSize)
+      ? `${selectedColor || 'none'}_${selectedSize || 'none'}`
+      : 'default';
+    const compositeKey = `${productId}_${variantId}`;
+
+    const currentItems = get().items;
+    const updated = currentItems.map((item) => {
+      const itemVariantId = (item.selectedColor || item.selectedSize)
+        ? `${item.selectedColor || 'none'}_${item.selectedSize || 'none'}`
+        : 'default';
+      const itemKey = `${item.productId}_${itemVariantId}`;
+      if (itemKey === compositeKey || (variant === undefined && item.productId === productId)) {
+        const clampedQty = Math.min(actualQty, item.stock || 999);
+        const uid = auth.currentUser?.uid || useAuthStore.getState().user?.uid;
+        if (uid) {
+          const itemDocRef = doc(db, 'carts', uid, 'items', itemKey);
+          setDoc(itemDocRef, { ...item, qty: clampedQty, quantity: clampedQty }, { merge: true })
+            .catch(err => console.error("Firestore qty sync failed:", err));
+        }
+        return { ...item, qty: clampedQty, quantity: clampedQty };
+      }
+      return item;
+    });
+
+    set({ items: updated });
+  },
+
+  updateQuantity: async (productId, quantity) => {
+    await get().updateQty(productId, undefined, quantity);
+  },
 
   applyCoupon: (code) => {
     const normalized = code.trim().toUpperCase();
-    // Pre-defined local coupons
     if (normalized === 'LILONGWE15' || normalized === 'BLANTYRE15' || normalized === 'EASTER20') {
       const discount = normalized === 'EASTER20' ? 20 : 15;
       set({ couponCode: normalized, discountPercent: discount });
@@ -498,11 +666,81 @@ export const useCartStore = create<CartState>((set, get) => ({
     return false;
   },
 
-  clearCart: () => set({ items: [], couponCode: '', discountPercent: 0 }),
+  clearCart: async () => {
+    set({ items: [], couponCode: '', discountPercent: 0 });
+    const uid = auth.currentUser?.uid || useAuthStore.getState().user?.uid;
+    if (uid) {
+      try {
+        const itemsColRef = collection(db, 'carts', uid, 'items');
+        const snap = await getDocs(itemsColRef);
+        const batch = writeBatch(db);
+        snap.forEach((doc) => {
+          batch.delete(doc.ref);
+        });
+        await batch.commit();
+      } catch (err) {
+        console.error("Firestore clearCart failed:", err);
+      }
+    }
+  },
+
+  syncFromFirestore: async (uid) => {
+    if (!uid) return;
+    set({ loading: true });
+    try {
+      const parentCol = collection(db, 'carts', uid, 'items');
+      const querySnap = await getDocs(parentCol);
+      const firestoreItems: any[] = [];
+      querySnap.forEach((doc) => {
+        firestoreItems.push({ ...doc.data() });
+      });
+
+      const localItems = get().items;
+      const mergedMap = new Map<string, any>();
+
+      firestoreItems.forEach((item) => {
+        const variantId = (item.selectedColor || item.selectedSize)
+          ? `${item.selectedColor || 'none'}_${item.selectedSize || 'none'}`
+          : 'default';
+        const itemKey = `${item.productId}_${variantId}`;
+        mergedMap.set(itemKey, item);
+      });
+
+      for (const item of localItems) {
+        const variantId = (item.selectedColor || item.selectedSize)
+          ? `${item.selectedColor || 'none'}_${item.selectedSize || 'none'}`
+          : 'default';
+        const itemKey = `${item.productId}_${variantId}`;
+
+        if (mergedMap.has(itemKey)) {
+          const existing = mergedMap.get(itemKey);
+          const newQty = Math.min((existing.qty || existing.quantity || 0) + (item.qty || item.quantity || 1), item.stock || 999);
+          const updated = {
+            ...existing,
+            qty: newQty,
+            quantity: newQty
+          };
+          mergedMap.set(itemKey, updated);
+
+          const itemDocRef = doc(db, 'carts', uid, 'items', itemKey);
+          await setDoc(itemDocRef, updated);
+        } else {
+          mergedMap.set(itemKey, item);
+          const itemDocRef = doc(db, 'carts', uid, 'items', itemKey);
+          await setDoc(itemDocRef, item);
+        }
+      }
+
+      set({ items: Array.from(mergedMap.values()), loading: false });
+    } catch (err) {
+      console.error("Failed syncing cart from Firestore:", err);
+      set({ loading: false });
+    }
+  },
 
   getTotals: () => {
     const { items, discountPercent } = get();
-    const subtotal = items.reduce((acc, item) => acc + item.price * item.quantity, 0);
+    const subtotal = items.reduce((acc, item) => acc + item.price * (item.qty || item.quantity || 1), 0);
     const discount = Math.round(subtotal * (discountPercent / 100));
     const total = subtotal - discount;
     return { subtotal, discount, total };

@@ -1,113 +1,201 @@
 import React, { useState } from 'react';
-import { SAMPLE_STORES, SAMPLE_PRODUCTS } from '../data/malawiProducts';
-import { ShieldAlert, Users, TrendingUp, Landmark, RefreshCw, Layers } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useAuthStore } from '../stores';
+import { 
+  ShieldAlert, 
+  LayoutDashboard, 
+  Users, 
+  Store, 
+  ShoppingBag, 
+  Receipt, 
+  Tag, 
+  CreditCard, 
+  Settings, 
+  FileText, 
+  ArrowLeft, 
+  Menu, 
+  X,
+  Lock 
+} from 'lucide-react';
+
+// Import local modular child views
+import AdminDashboard from './admin/AdminDashboard';
+import AdminUsers from './admin/AdminUsers';
+import AdminSellers from './admin/AdminSellers';
+import AdminProducts from './admin/AdminProducts';
+import AdminOrders from './admin/AdminOrders';
+import AdminCoupons from './admin/AdminCoupons';
+import AdminPayouts from './admin/AdminPayouts';
+import AdminSettings from './admin/AdminSettings';
+import AdminLogs from './admin/AdminLogs';
 
 export default function AdminPanel() {
-  const [stores, setStores] = useState(SAMPLE_STORES);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { user: currentUser } = useAuthStore();
   
-  const handleToggleVerify = (storeId: string) => {
-    setStores(
-      stores.map((s) =>
-        s.id === storeId ? { ...s, verified: !s.verified } : s
-      )
-    );
+  // Mobile navigation drawer toggle
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const menuItems = [
+    { label: 'Control Desk', path: '/admin', icon: LayoutDashboard },
+    { label: 'User Registry', path: '/admin/users', icon: Users },
+    { label: 'Seller Approvals', path: '/admin/sellers/pending', icon: Store },
+    { label: 'Product Moderation', path: '/admin/products', icon: ShoppingBag },
+    { label: 'Order Arbitration', path: '/admin/orders', icon: Receipt },
+    { label: 'Promo Coupons', path: '/admin/coupons', icon: Tag },
+    { label: 'Cash Disbursements', path: '/admin/payouts', icon: CreditCard },
+    { label: 'System Overrides', path: '/admin/settings', icon: Settings },
+    { label: 'Audit Ledger', path: '/admin/logs', icon: FileText },
+  ];
+
+  const currentPath = location.pathname.replace(/\/$/, "");
+
+  const handleNavigatePath = (path: string) => {
+    navigate(path);
+    setMobileMenuOpen(false);
+  };
+
+  const renderActiveSubpage = () => {
+    if (currentPath === '/admin' || currentPath === '') {
+      return <AdminDashboard />;
+    }
+    if (currentPath === '/admin/users') {
+      return <AdminUsers />;
+    }
+    if (currentPath === '/admin/sellers/pending' || currentPath === '/admin/sellers') {
+      return <AdminSellers />;
+    }
+    if (currentPath === '/admin/products') {
+      return <AdminProducts />;
+    }
+    if (currentPath === '/admin/orders') {
+      return <AdminOrders />;
+    }
+    if (currentPath === '/admin/coupons') {
+      return <AdminCoupons />;
+    }
+    if (currentPath === '/admin/payouts') {
+      return <AdminPayouts />;
+    }
+    if (currentPath === '/admin/settings') {
+      return <AdminSettings />;
+    }
+    if (currentPath === '/admin/logs') {
+      return <AdminLogs />;
+    }
+    return <AdminDashboard />;
   };
 
   return (
-    <div className="flex flex-col gap-4 p-4 animate-[fadeIn_0.3s_ease]">
+    <div className="min-h-screen bg-slate-50 flex flex-col md:flex-row font-sans selection:bg-rose-500 selection:text-white" id="admin-master-shell">
       
-      {/* HEADER SECTION */}
-      <h2 className="font-display font-black text-base text-neutral-900 uppercase tracking-tight flex items-center gap-1.5">
-        <ShieldAlert className="h-5 w-5 text-rose-600" />
-        <span>ShopEasy Support Console</span>
-      </h2>
-
-      {/* 1. MALAWI METRICS HUD GRID */}
-      <div className="grid grid-cols-2 gap-3.5">
-        <div className="bg-white p-4 rounded-3xl border border-neutral-100 shadow-sm">
-          <TrendingUp className="h-5 w-5 text-[#E53935] mb-2" />
-          <span className="block text-[9px] font-black uppercase text-neutral-450 tracking-wider">Estimated Volume</span>
-          <span className="block font-mono text-base font-black text-neutral-900 mt-1">MWK 4.2M</span>
+      {/* 1. MOBILE HEADER NAV BAR */}
+      <div className="md:hidden bg-slate-900 text-white p-4 flex items-center justify-between border-b border-slate-800 shrink-0 shadow-sm">
+        <div className="flex items-center gap-2">
+          <ShieldAlert className="w-5 h-5 text-rose-500 animate-[bounce_2s_infinite]" />
+          <span className="font-display font-black text-xs uppercase tracking-widest text-slate-100">ShopEasy Administration</span>
         </div>
-
-        <div className="bg-white p-4 rounded-3xl border border-neutral-100 shadow-sm">
-          <Landmark className="h-5 w-5 text-[#FFB300] mb-2" />
-          <span className="block text-[9px] font-black uppercase text-neutral-450 tracking-wider">Escrow Holds</span>
-          <span className="block font-mono text-base font-black text-neutral-900 mt-1">MWK 820K</span>
-        </div>
+        
+        <button 
+          onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+          className="p-1.5 hover:bg-slate-800 rounded-lg text-slate-300 hover:text-white"
+        >
+          {mobileMenuOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+        </button>
       </div>
 
-      {/* 2. COLLECTION DATA SIZES MONITOR */}
-      <div className="bg-white p-4 rounded-3xl border border-neutral-100 shadow-sm flex flex-col gap-2.5">
-        <span className="text-xs font-black text-neutral-500 uppercase tracking-wider text-[10px] flex items-center gap-1.5">
-          <Layers className="h-4 w-4 text-neutral-400" />
-          <span>Active Firestore Collections (13 total)</span>
-        </span>
-
-        <div className="grid grid-cols-2 gap-2 text-[11px] font-semibold text-neutral-600">
-          <div className="bg-neutral-50 rounded-xl p-2.5 flex justify-between">
-            <span>users</span>
-            <span className="font-mono font-black text-neutral-900">452</span>
-          </div>
-          <div className="bg-neutral-50 rounded-xl p-2.5 flex justify-between">
-            <span>products</span>
-            <span className="font-mono font-black text-neutral-900">{SAMPLE_PRODUCTS.length}</span>
-          </div>
-          <div className="bg-neutral-50 rounded-xl p-2.5 flex justify-between">
-            <span>stores</span>
-            <span className="font-mono font-black text-neutral-900">{stores.length}</span>
-          </div>
-          <div className="bg-neutral-50 rounded-xl p-2.5 flex justify-between">
-            <span>orders</span>
-            <span className="font-mono font-black text-neutral-900">128</span>
-          </div>
-        </div>
-      </div>
-
-      {/* 3. VERIFY PENDING SELLER REVIEWS */}
-      <div className="flex flex-col gap-3">
-        <h4 className="font-display font-extrabold text-xs text-neutral-550 uppercase tracking-wider">
-          Verify Local Sellers
-        </h4>
-
-        <div className="flex flex-col gap-2.5">
-          {stores.map((st) => (
-            <div 
-              key={st.id}
-              className="bg-white rounded-3xl p-4 border border-neutral-100 shadow-sm flex flex-col gap-3"
-            >
-              <div className="flex justify-between items-start">
-                <div>
-                  <h5 className="font-extrabold text-xs text-neutral-905">{st.name}</h5>
-                  <span className="text-[10px] text-neutral-450 font-bold block mt-0.5">
-                    Owner: {st.ownerId} • {st.city}
-                  </span>
-                </div>
-
-                <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded ${
-                  st.verified ? 'bg-blue-50 text-blue-600' : 'bg-neutral-100 text-neutral-400'
-                }`}>
-                  {st.verified ? 'Verified' : 'Unverified'}
-                </span>
+      {/* 2. SIDEBAR NAVIGATION - DESKTOP & MOBILE DRAWER */}
+      <aside className={`
+        fixed inset-0 z-40 bg-slate-900 text-white p-5 flex flex-col justify-between border-r border-slate-800 shadow-xl transition-transform duration-300 ease-in-out shrink-0
+        md:relative md:translate-x-0 md:w-64 md:h-screen md:flex
+        ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      `}>
+        <div className="space-y-6">
+          
+          {/* Header Badge */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <div className="w-8 h-8 rounded-xl bg-rose-600/20 border border-rose-500/30 flex items-center justify-center shadow-3xs">
+                <ShieldAlert className="w-4.5 h-4.5 text-rose-500" />
               </div>
-
-              <div className="flex justify-between items-center pt-2.5 border-t border-neutral-100">
-                <span className="text-[10px] text-neutral-400 font-bold">Phone: {st.contactPhone}</span>
-                <button
-                  onClick={() => handleToggleVerify(st.id)}
-                  className={`px-3 py-1.5 rounded-full text-[10px] font-black transition ${
-                    st.verified
-                      ? 'bg-neutral-100 hover:bg-neutral-200 text-neutral-700'
-                      : 'bg-rose-600 hover:bg-rose-700 text-white'
-                  }`}
-                >
-                  {st.verified ? 'Revoke Badge' : 'Verify Seller'}
-                </button>
+              <div className="min-w-0">
+                <h1 className="font-display font-black text-xs uppercase tracking-wider text-slate-50">ShopEasy Console</h1>
+                <span className="text-[9px] uppercase font-bold text-slate-400 mt-0.5 tracking-wider block">Admin Zone</span>
               </div>
             </div>
-          ))}
+
+            {/* Mobile Close Button */}
+            <button 
+              onClick={() => setMobileMenuOpen(false)}
+              className="md:hidden p-1 bg-slate-800 text-slate-400 rounded-lg"
+            >
+              <X className="w-4.5 h-4.5" />
+            </button>
+          </div>
+
+          {/* Navigation Links list */}
+          <nav className="space-y-1 font-semibold text-xs">
+            {menuItems.map((item) => {
+              const Icon = item.icon;
+              const isActive = currentPath === item.path;
+
+              return (
+                <button
+                  key={item.path}
+                  onClick={() => handleNavigatePath(item.path)}
+                  className={`w-full py-2.5 px-3.5 rounded-xl flex items-center gap-3 transition duration-150 uppercase text-[10.5px] font-bold ${
+                    isActive 
+                      ? 'bg-rose-600 text-white shadow-3xs' 
+                      : 'text-slate-400 hover:text-slate-105 hover:bg-slate-800/60 hover:text-white'
+                  }`}
+                >
+                  <Icon className={`w-4.5 h-4.5 shrink-0 ${isActive ? 'text-white' : 'text-slate-400'}`} />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </nav>
         </div>
-      </div>
+
+        {/* Footer actions */}
+        <div className="pt-4 border-t border-slate-800 space-y-3.5">
+          <div className="flex items-center gap-2.5 p-1">
+             <div className="w-8 h-8 rounded-full bg-slate-800 flex items-center justify-center font-black text-rose-500 border text-xs">
+                {currentUser?.name?.slice(0, 2).toUpperCase() || 'AD'}
+             </div>
+             <div className="min-w-0">
+                <span className="block font-bold text-slate-105 text-[11px] truncate">{currentUser?.name || 'Administrator'}</span>
+                <span className="text-[8.5px] uppercase font-black text-slate-450 tracking-wide flex items-center gap-1 mt-0.5">
+                   <Lock className="w-3 h-3 text-rose-500" /> Root Access
+                </span>
+             </div>
+          </div>
+
+          <button
+            onClick={() => navigate('/')}
+            className="w-full py-2.5 px-3 bg-slate-800 hover:bg-slate-950 text-slate-205 text-slate-200 rounded-xl text-[10px] font-black uppercase transition-all flex items-center justify-center gap-2 border border-slate-700/50 shadow-3xs"
+          >
+            <ArrowLeft className="w-4 h-4" /> Go to Marketplace
+          </button>
+        </div>
+      </aside>
+
+      {/* 3. SCROLLABLE CONTAINER WORKSPACE */}
+      <main className="flex-1 flex flex-col h-screen overflow-y-auto select-none">
+        
+        {/* Banner Announcement Broadcaster notification */}
+        <div className="bg-slate-900 border-b border-rose-550/30 text-rose-50 w-full py-1.5 px-4 text-center text-[9px] font-black uppercase tracking-widest flex items-center justify-center gap-2 shrink-0">
+          <span className="w-1.5 h-1.5 bg-rose-500 rounded-full animate-ping shrink-0" />
+          <span>PRODUCTION CONTROL: Real-time Cloud Firestore updates synced</span>
+        </div>
+
+        {/* Responsive Content space */}
+        <div className="flex-1 p-4 sm:p-5.5 md:p-7 max-w-7xl mx-auto w-full space-y-6">
+          {renderActiveSubpage()}
+        </div>
+
+      </main>
 
     </div>
   );

@@ -13,6 +13,15 @@ export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
 // Initialize Auth
 export const auth = getAuth(app);
 
+// Initialize Storage
+import { getStorage } from 'firebase/storage';
+export const storage = getStorage(app);
+
+// Initialize Corporate Cloud Functions
+import { getFunctions, httpsCallable } from 'firebase/functions';
+export const functions = getFunctions(app);
+export { httpsCallable };
+
 // Authentication Provider
 export const googleProvider = new GoogleAuthProvider();
 

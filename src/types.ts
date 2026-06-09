@@ -105,6 +105,16 @@ export interface CartItem {
   storeId: string;
   storeName: string;
   city: string;
+  title?: string;
+  image?: string;
+  originalPrice?: number;
+  discountPercent?: number;
+  sellerId?: string;
+  selectedColor?: string;
+  selectedSize?: string;
+  qty?: number;
+  stock?: number;
+  freeDelivery?: boolean;
 }
 
 export interface Cart {

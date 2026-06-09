@@ -9,7 +9,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useCartStore, useAuthStore, useNotificationStore } from '../stores';
 import { SEED_PRODUCTS } from '../data/seedData';
 import { SAMPLE_STORES } from '../data/malawiProducts';
-import { db, handleFirestoreError } from '../firebase';
+import { db, handleFirestoreError, auth } from '../firebase';
 import { OperationType } from '../types';
 import { 
   collection, doc, getDoc, getDocs, setDoc, deleteDoc, addDoc, query, where, limit, orderBy 
@@ -147,6 +147,30 @@ export default function ProductDetails() {
             checkWishlistState(user.uid, id);
             checkFollowStoreState(user.uid, productData.sellerId || productData.storeId);
             verifyUserCompletedOrder(user.uid, id);
+          }
+
+          // Save to Recently Viewed
+          try {
+            const localViewedRaw = localStorage.getItem('shopeasy_viewed');
+            let localViewed: string[] = [];
+            if (localViewedRaw) {
+              localViewed = JSON.parse(localViewedRaw);
+            }
+            if (!localViewed.includes(id)) {
+              localViewed = [id, ...localViewed].slice(0, 55);
+              localStorage.setItem('shopeasy_viewed', JSON.stringify(localViewed));
+            }
+
+            const activeUid = user?.uid || auth.currentUser?.uid;
+            if (activeUid) {
+              const viewedDocRef = doc(db, 'users', activeUid, 'viewed', id);
+              setDoc(viewedDocRef, {
+                productId: id,
+                viewedAt: new Date().toISOString()
+              }, { merge: true }).catch(err => console.warn("Firestore save viewed error:", err));
+            }
+          } catch (err) {
+            console.error("Failed to update shopeasy_viewed:", err);
           }
         } else {
           setProduct(null);

@@ -79,9 +79,50 @@
         "createdAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "buyerId", "buyerName", "buyerPhone", "storeId", "storeName", "subtotal", "discount", "total", "deliveryMethod", "status", "paymentStatus", "createdAt"]
+    },
+    "CoinTransaction": {
+      "title": "CoinTransaction",
+      "description": "Record of a coin transaction (bonus, charge, win, check-in, etc)",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "amount": { "type": "number" },
+        "type": { "type": "string", "enum": ["daily_check_in", "spin_wheel", "game_match", "game_merge", "bonus", "redemption"] },
+        "description": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "amount", "type", "description", "createdAt"]
+    },
+    "CoinLeaderboard": {
+      "title": "CoinLeaderboard",
+      "description": "Leaderboard standings tracking lifetime dynamic earnings",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "userName": { "type": "string" },
+        "avatar": { "type": "string" },
+        "totalCoinsEarned": { "type": "number" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "userName", "totalCoinsEarned", "updatedAt"]
+    },
+    "CoinsSettings": {
+      "title": "CoinsSettings",
+      "description": "Central system settings for coins exchange rates and game settings",
+      "type": "object",
+      "properties": {
+        "redemptionRate": { "type": "number" },
+        "checkInRewards": { "type": "array" }
+      },
+      "required": ["redemptionRate"]
     }
   },
   "firestore": {
+    "/config/coinsSettings": {
+      "schema": "CoinsSettings",
+      "description": "Global settings for ShopEasy Loyalty Coins configurations"
+    },
     "/users/{userId}": {
       "schema": "UserProfile",
       "description": "User profiles with phone OTP authentication details"
