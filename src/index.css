@@ -5,6 +5,14 @@
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Outfit", sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* ShopEasy brand design tokens */
+  --color-primary: #e53935;
+  --color-primary-dark: #c62828;
+  --color-gold: #ffb300;
+  --color-gold-soft: #fff8e1;
+  --color-ink: #212121;
+  --color-surface: #f5f5f5;
 }
 
 /* Base custom interactive styles */
